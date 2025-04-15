@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:medicinetip/services/ai_service.dart';
 import 'package:medicinetip/services/storage_service.dart';
-import 'services/notification_service.dart';
 import 'services/reminder_service.dart';
 import 'ui/screens/home_screen.dart';
 import 'ui/screens/add_reminder_screen.dart';
@@ -12,21 +11,31 @@ import 'core/constants.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const MyApp());
+  final storageService = StorageService();
+  await storageService.init();
+  
+  final reminderService = ReminderService(
+    storageService: storageService,
+  );
+  reminderService.init(); // 初始化 ReminderServic
+  
+  await reminderService.loadData();
+  
+  runApp(MyApp(
+    reminderService: reminderService,
+  ));
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  final ReminderService reminderService;
+
+  const MyApp({
+    super.key,
+    required this.reminderService,
+  });
 
   @override
   Widget build(BuildContext context) {
-    // 创建共享的服务实例
-    final notificationService = NotificationService();
-    final storageService = StorageService();
-    final reminderService = ReminderService(
-      notificationService: notificationService,
-      storageService: storageService,
-    );
 
     return MaterialApp(
       title: '用药提醒',
@@ -38,7 +47,6 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
       ),
       home: MyHomePage(
-        notificationService: notificationService,
         reminderService: reminderService,
       ),
       routes: {
@@ -50,11 +58,10 @@ class MyApp extends StatelessWidget {
           reminderService: reminderService,
         ),
         AppConstants.settingsRoute: (context) => SettingsScreen(
-          notificationService: notificationService,
           reminderService: reminderService,
         ),
         AppConstants.reminderDetailRoute: (context) => ReminderDetailScreen(
-          reminderId: "tmpid",
+          reminderId: ModalRoute.of(context)!.settings.arguments as String,
           reminderService: reminderService,
         ),
       },
@@ -63,12 +70,10 @@ class MyApp extends StatelessWidget {
 }
 
 class MyHomePage extends StatefulWidget {
-  final NotificationService notificationService;
   final ReminderService reminderService;
 
   const MyHomePage({
     super.key,
-    required this.notificationService,
     required this.reminderService,
   });
 
@@ -97,7 +102,6 @@ class _MyHomePageState extends State<MyHomePage> {
         break;
       case 3:
         page = SettingsScreen(
-          notificationService: widget.notificationService,
           reminderService: widget.reminderService,
         );
         break;
@@ -113,7 +117,7 @@ class _MyHomePageState extends State<MyHomePage> {
             children: [
               SafeArea(
                 child: NavigationRail(
-                  backgroundColor: theme.colorScheme.primary.withOpacity(0.1),
+                  backgroundColor: theme.colorScheme.primary.withAlpha(25),
                   selectedIconTheme: IconThemeData(
                     color: theme.colorScheme.primary,
                   ),

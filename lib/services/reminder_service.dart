@@ -1,12 +1,10 @@
 import 'package:uuid/uuid.dart';
 import '../models/reminder.dart';
 import 'storage_service.dart';
-import 'notification_service.dart';
 
 /// 提醒服务类，用于管理用药提醒
 class ReminderService {
   final StorageService _storageService;
-  final NotificationService _notificationService;
   final _uuid = const Uuid();
   
   List<Reminder> _reminders = [];
@@ -14,14 +12,10 @@ class ReminderService {
   
   ReminderService({
     required StorageService storageService,
-    required NotificationService notificationService,
-  }) : _storageService = storageService,
-       _notificationService = notificationService;
+  }) : _storageService = storageService;
   
   /// 初始化服务
   Future<void> init() async {
-    await _storageService.init();
-    await _notificationService.init();
     await loadData();
   }
   
@@ -60,14 +54,10 @@ class ReminderService {
       dosage: dosage,
       unit: unit,
       scheduledTimes: scheduledTimes,
-      notes: notes,
-      createdAt: DateTime.now(),
-      time: DateTime.now(),
     );
     
     _reminders.add(reminder);
     await _saveReminders();
-    await _notificationService.scheduleReminderNotification(reminder);
     
     return reminder;
   }
@@ -82,23 +72,32 @@ class ReminderService {
     
     _reminders[index] = updatedReminder;
     await _saveReminders();
-    await _notificationService.scheduleReminderNotification(updatedReminder);
     
     return updatedReminder;
   }
   
-  /// 删除提醒
+  /// 删除提醒及其相关的服药记录
   Future<void> deleteReminder(String id) async {
+    final reminder = getReminderById(id);
+    print('开始删除提醒，ID: $id，药品名称: ${reminder?.medicineName}');
+    final reminderCount = _reminders.length;
+    final recordCount = _records.length;
+    
     _reminders.removeWhere((reminder) => reminder.id == id);
+    _records.removeWhere((record) => record.reminderId == id);
+    
+    print('删除后提醒数量: ${_reminders.length}，原数量: $reminderCount');
+    print('删除后记录数量: ${_records.length}，原数量: $recordCount');
+    
     await _saveReminders();
-    await _notificationService.cancelReminderNotifications(id);
+    await _saveMedicationRecords();
+    print('删除操作完成，数据已保存');
   }
   
   /// 记录服药
   Future<MedicationRecord> recordMedication({
     required String reminderId,
     DateTime? takenAt,
-    bool takenOnTime = true,
     String notes = '',
   }) async {
     final reminder = getReminderById(reminderId);
@@ -114,16 +113,7 @@ class ReminderService {
       dosage: reminder.dosage,
       unit: reminder.unit,
       takenAt: takenAt ?? DateTime.now(),
-      takenOnTime: takenOnTime,
-      notes: notes,
     );
-    
-    // 更新提醒的最后服药时间
-    final updatedReminder = reminder.copyWith(
-      lastTakenAt: () => record.takenAt,
-    );
-    
-    await updateReminder(updatedReminder);
     
     _records.add(record);
     await _saveMedicationRecords();
@@ -132,7 +122,7 @@ class ReminderService {
   }
   
   /// 获取特定提醒的服药记录
-  List<MedicationRecord> getMedicationRecordsForReminder(String reminderId) {
+  List<MedicationRecord> getMedicationRecordsForReminder(String reminderId){
     return _records.where((record) => record.reminderId == reminderId).toList();
   }
   

@@ -30,16 +30,28 @@ class _HistoryScreenState extends State<HistoryScreen> {
       _isLoading = true;
     });
 
-    // 获取所有服药记录
-    final records = widget.reminderService.medicationRecords;
-    
-    // 按时间排序（最新的在前面）
-    records.sort((a, b) => b.takenAt.compareTo(a.takenAt));
-    
-    setState(() {
-      _records = records;
-      _isLoading = false;
-    });
+    try {
+      // 确保数据已加载
+      await widget.reminderService.loadData();
+      
+      // 获取所有服药记录并创建新的可修改列表
+      final records = List<MedicationRecord>.from(widget.reminderService.medicationRecords);
+      print('已加载服药记录，共 ${records.length} 条记录');
+      
+      // 按时间排序（最新的在前面）
+      records.sort((a, b) => b.takenAt.compareTo(a.takenAt));
+      
+      setState(() {
+        _records = records;
+        _isLoading = false;
+      });
+    } catch (e) {
+      print('加载服药记录失败: $e');
+      setState(() {
+        _records = [];
+        _isLoading = false;
+      });
+    }
   }
 
   @override
@@ -106,10 +118,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   Widget _buildRecordItem(MedicationRecord record) {
     return ListTile(
-      leading: CircleAvatar(
-        backgroundColor: record.takenOnTime ? Colors.green : Colors.orange,
+      leading: const CircleAvatar(
+        backgroundColor: Colors.green,
         child: Icon(
-          record.takenOnTime ? Icons.check : Icons.access_time,
+          Icons.check,
           color: Colors.white,
         ),
       ),
@@ -117,26 +129,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
       subtitle: Text(
         '${record.dosage} ${record.unit} · ${_timeFormat.format(record.takenAt)}',
       ),
-      trailing: record.notes.isNotEmpty
-          ? IconButton(
-              icon: const Icon(Icons.info_outline),
-              onPressed: () {
-                showDialog(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: const Text('备注'),
-                    content: Text(record.notes),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('关闭'),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            )
-          : null,
     );
   }
 }

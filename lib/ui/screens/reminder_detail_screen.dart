@@ -8,10 +8,10 @@ class ReminderDetailScreen extends StatefulWidget {
   final ReminderService reminderService;
 
   const ReminderDetailScreen({
-    Key? key,
+    super.key,
     required this.reminderId,
     required this.reminderService,
-  }) : super(key: key);
+  }) ;
 
   @override
   State<ReminderDetailScreen> createState() => _ReminderDetailScreenState();
@@ -37,9 +37,11 @@ class _ReminderDetailScreenState extends State<ReminderDetailScreen> {
 
     try {
       // 获取提醒详情
+      print('正在加载提醒详情，ID: ${widget.reminderId}');
       final reminder = widget.reminderService.getReminderById(widget.reminderId);
       
       if (reminder == null) {
+        print('提醒不存在，ID: ${widget.reminderId}');
         // 提醒不存在，返回上一页
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -49,9 +51,11 @@ class _ReminderDetailScreenState extends State<ReminderDetailScreen> {
         }
         return;
       }
+      print('提醒详情加载成功：${reminder.toString()}');
       
       // 获取该提醒的服药记录
       final records = widget.reminderService.getMedicationRecordsForReminder(widget.reminderId);
+      print('已加载服药记录，共 ${records.length} 条');
       
       // 按时间排序（最新的在前面）
       records.sort((a, b) => b.takenAt.compareTo(a.takenAt));
@@ -113,9 +117,12 @@ class _ReminderDetailScreenState extends State<ReminderDetailScreen> {
       ),
     );
     
-    if (confirmed != true) return;
+    if (confirmed != true){
+      return;
+    }
     
     try {
+      print('正在删除提醒，ID: ${widget.reminderId}');
       await widget.reminderService.deleteReminder(widget.reminderId);
       
       if (mounted) {
@@ -189,6 +196,7 @@ class _ReminderDetailScreenState extends State<ReminderDetailScreen> {
                           final updatedReminder = _reminder!.copyWith(isActive: value);
                           await widget.reminderService.updateReminder(updatedReminder);
                           _loadData(); // 重新加载数据
+                          Navigator.pop(context, true); // 返回上一页并刷新
                         },
                       ),
                     ],
@@ -210,22 +218,7 @@ class _ReminderDetailScreenState extends State<ReminderDetailScreen> {
                       );
                     }).toList(),
                   ),
-                  if (_reminder!.notes.isNotEmpty) ...[  
-                    const SizedBox(height: 16),
-                    const Text('备注:', style: TextStyle(fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 8),
-                    Text(_reminder!.notes),
-                  ],
                   const SizedBox(height: 16),
-                  Text(
-                    '创建于: ${_dateTimeFormat.format(_reminder!.createdAt)}',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  if (_reminder!.lastTakenAt != null)
-                    Text(
-                      '最后服药: ${_dateTimeFormat.format(_reminder!.lastTakenAt!)}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
                 ],
               ),
             ),
@@ -257,15 +250,14 @@ class _ReminderDetailScreenState extends State<ReminderDetailScreen> {
                     itemBuilder: (context, index) {
                       final record = _records[index];
                       return ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: record.takenOnTime ? Colors.green : Colors.orange,
+                        leading: const CircleAvatar(
+                          backgroundColor: Colors.green,
                           child: Icon(
-                            record.takenOnTime ? Icons.check : Icons.access_time,
+                            Icons.check,
                             color: Colors.white,
                           ),
                         ),
                         title: Text(_dateTimeFormat.format(record.takenAt)),
-                        subtitle: record.notes.isNotEmpty ? Text(record.notes) : null,
                       );
                     },
                   ),

@@ -7,10 +7,10 @@ class AddReminderScreen extends StatefulWidget {
   final AIService aiService;
 
   const AddReminderScreen({
-    Key? key,
+    super.key,
     required this.reminderService,
     required this.aiService,
-  }) : super(key: key);
+  });
 
   @override
   State<AddReminderScreen> createState() => _AddReminderScreenState();
@@ -21,7 +21,6 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
   final _medicineNameController = TextEditingController();
   final _dosageController = TextEditingController();
   final _unitController = TextEditingController();
-  final _notesController = TextEditingController();
   
   final List<TimeOfDay> _scheduledTimes = [TimeOfDay(hour: 8, minute: 0)];
   bool _isProcessing = false;
@@ -33,7 +32,6 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
     _medicineNameController.dispose();
     _dosageController.dispose();
     _unitController.dispose();
-    _notesController.dispose();
     super.dispose();
   }
 
@@ -52,7 +50,6 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
       _medicineNameController.text = result['medicineName'] ?? '';
       _dosageController.text = result['dosage'] ?? '';
       _unitController.text = result['unit'] ?? '';
-      _notesController.text = text;
       
       // 处理时间
       if (result['scheduledTimes'] != null && result['scheduledTimes'] is List) {
@@ -68,9 +65,11 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
         });
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('解析失败: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('解析失败: $e')),
+        );
+      }
     } finally {
       setState(() {
         _isProcessing = false;
@@ -129,12 +128,23 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
         dosage: _dosageController.text,
         unit: _unitController.text,
         scheduledTimes: scheduledTimes,
-        notes: _notesController.text,
       );
 
-      // 返回上一页
+      // 隐藏键盘
+      FocusScope.of(context).unfocus();
+      
+      // 显示成功提示
       if (mounted) {
-        Navigator.pop(context, true);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('保存成功')),
+        );
+        
+        // 短暂延迟后返回上一页
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted && Navigator.canPop(context)) {
+            Navigator.pop(context, true);
+          }
+        });
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -302,17 +312,6 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
               ],
             ),
             const SizedBox(height: 16),
-            
-            // 备注
-            TextFormField(
-              controller: _notesController,
-              decoration: const InputDecoration(
-                labelText: '备注（可选）',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 3,
-            ),
-            const SizedBox(height: 24),
             
             // 保存按钮
             ElevatedButton(

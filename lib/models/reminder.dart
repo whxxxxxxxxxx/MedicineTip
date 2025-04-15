@@ -7,11 +7,7 @@ class Reminder {
   final String dosage; // 剂量
   final String unit; // 单位（如：片、毫升等）
   final List<DateTime> scheduledTimes; // 计划服药时间
-  final String notes; // 备注
   final bool isActive; // 是否激活提醒
-  final DateTime createdAt; // 创建时间
-  final DateTime? lastTakenAt; // 最后一次服药时间
-  final DateTime time;
 
   Reminder({
     required this.id,
@@ -19,11 +15,7 @@ class Reminder {
     required this.dosage,
     required this.unit,
     required this.scheduledTimes,
-    this.notes = '',
     this.isActive = true,
-    required this.createdAt,
-    this.lastTakenAt,
-    required this.time,
   });
 
   /// 从JSON创建Reminder对象
@@ -36,13 +28,7 @@ class Reminder {
       scheduledTimes: (json['scheduledTimes'] as List)
           .map((time) => DateTime.parse(time))
           .toList(),
-      notes: json['notes'] ?? '',
       isActive: json['isActive'] ?? true,
-      createdAt: DateTime.parse(json['createdAt']),
-      lastTakenAt: json['lastTakenAt'] != null
-          ? DateTime.parse(json['lastTakenAt'])
-          : null,
-      time: DateTime.parse(json['time']),
     );
   }
 
@@ -55,10 +41,7 @@ class Reminder {
       'unit': unit,
       'scheduledTimes':
           scheduledTimes.map((time) => time.toIso8601String()).toList(),
-      'notes': notes,
       'isActive': isActive,
-      'createdAt': createdAt.toIso8601String(),
-      'lastTakenAt': lastTakenAt?.toIso8601String(),
     };
   }
 
@@ -80,11 +63,7 @@ class Reminder {
       dosage: dosage ?? this.dosage,
       unit: unit ?? this.unit,
       scheduledTimes: scheduledTimes ?? this.scheduledTimes,
-      notes: notes ?? this.notes,
       isActive: isActive ?? this.isActive,
-      createdAt: createdAt ?? this.createdAt,
-      lastTakenAt: lastTakenAt != null ? lastTakenAt() : this.lastTakenAt,
-      time: time,
     );
   }
 }
@@ -97,8 +76,6 @@ class MedicationRecord {
   final String dosage; // 剂量
   final String unit; // 单位
   final DateTime takenAt; // 服药时间
-  final bool takenOnTime; // 是否按时服药
-  final String notes; // 备注
 
   MedicationRecord({
     required this.id,
@@ -107,8 +84,6 @@ class MedicationRecord {
     required this.dosage,
     required this.unit,
     required this.takenAt,
-    this.takenOnTime = true,
-    this.notes = '',
   });
 
   /// 从JSON创建MedicationRecord对象
@@ -120,8 +95,6 @@ class MedicationRecord {
       dosage: json['dosage'],
       unit: json['unit'],
       takenAt: DateTime.parse(json['takenAt']),
-      takenOnTime: json['takenOnTime'] ?? true,
-      notes: json['notes'] ?? '',
     );
   }
 
@@ -134,8 +107,6 @@ class MedicationRecord {
       'dosage': dosage,
       'unit': unit,
       'takenAt': takenAt.toIso8601String(),
-      'takenOnTime': takenOnTime,
-      'notes': notes,
     };
   }
 }

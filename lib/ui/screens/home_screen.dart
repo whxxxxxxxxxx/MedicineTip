@@ -29,13 +29,30 @@ class _HomeScreenState extends State<HomeScreen> {
       _isLoading = true;
     });
 
-    // 获取提醒列表
-    final reminders = widget.reminderService.reminders;
-    
-    setState(() {
-      _reminders = reminders;
-      _isLoading = false;
-    });
+    try {
+      // 确保数据已加载
+      await widget.reminderService.loadData();
+      // 获取提醒列表
+      final reminders = widget.reminderService.reminders;
+      print('已加载提醒列表，共 ${reminders.length} 条记录');
+      for (var reminder in reminders) {
+        print('提醒ID: ${reminder.id}, 药品名: ${reminder.medicineName}, 是否启用: ${reminder.isActive}');
+      }
+      
+      setState(() {
+        _reminders = reminders;
+        _isLoading = false;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('加载失败: $e')),
+        );
+      }
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
 
   @override
@@ -85,6 +102,7 @@ class _HomeScreenState extends State<HomeScreen> {
         itemCount: _reminders.length,
         itemBuilder: (context, index) {
           final reminder = _reminders[index];
+          print('点击提醒项：ID=${reminder.id}, 药品名=${reminder.medicineName}');
           // 需要先创建并导入 ReminderListItem widget
           return ReminderListItem(
             reminder: reminder,

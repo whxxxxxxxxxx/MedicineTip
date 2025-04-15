@@ -1,15 +1,12 @@
 import 'package:flutter/material.dart';
 import '../../services/reminder_service.dart';
-import '../../services/notification_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   final ReminderService reminderService;
-  final NotificationService notificationService;
 
   const SettingsScreen({
     Key? key,
     required this.reminderService,
-    required this.notificationService,
   }) : super(key: key);
 
   @override
