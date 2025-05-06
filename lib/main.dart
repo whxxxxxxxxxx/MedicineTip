@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:medicinetip/services/ai_service.dart';
 import 'package:medicinetip/services/storage_service.dart';
 import 'services/reminder_service.dart';
@@ -11,6 +12,7 @@ import 'core/constants.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await dotenv.load(fileName: ".env");
   final storageService = StorageService();
   await storageService.init();
   
@@ -25,6 +27,8 @@ void main() async {
     reminderService: reminderService,
   ));
 }
+
+
 
 class MyApp extends StatelessWidget {
   final ReminderService reminderService;
@@ -113,49 +117,37 @@ class _MyHomePageState extends State<MyHomePage> {
       builder: (context, constraints) {
         final theme = Theme.of(context);
         return Scaffold(
-          body: Row(
-            children: [
-              SafeArea(
-                child: NavigationRail(
-                  backgroundColor: theme.colorScheme.primary.withAlpha(25),
-                  selectedIconTheme: IconThemeData(
-                    color: theme.colorScheme.primary,
-                  ),
-                  unselectedIconTheme: IconThemeData(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                  extended: constraints.maxWidth >= 600,
-                  destinations: const [
-                    NavigationRailDestination(
-                      icon: Icon(Icons.home),
-                      label: Text('首页'),
-                    ),
-                    NavigationRailDestination(
-                      icon: Icon(Icons.add),
-                      label: Text('添加提醒'),
-                    ),
-                    NavigationRailDestination(
-                      icon: Icon(Icons.history),
-                      label: Text('历史记录'),
-                    ),
-                    NavigationRailDestination(
-                      icon: Icon(Icons.settings),
-                      label: Text('设置'),
-                    ),
-                  ],
-                  selectedIndex: selectedIndex,
-                  onDestinationSelected: (value) {
-                    setState(() {
-                      selectedIndex = value;
-                    });
-                  },
-                ),
+          body: Container(
+            color: theme.colorScheme.primaryContainer,
+            child: page,
+          ),
+          bottomNavigationBar: BottomNavigationBar(
+            currentIndex: selectedIndex,
+            type: BottomNavigationBarType.fixed,
+            selectedItemColor: theme.colorScheme.primary,
+            unselectedItemColor: theme.colorScheme.onSurfaceVariant,
+            backgroundColor: theme.colorScheme.primary.withAlpha(25),
+            onTap: (value) {
+              setState(() {
+                selectedIndex = value;
+              });
+            },
+            items: const [
+              BottomNavigationBarItem(
+                icon: Icon(Icons.home),
+                label: '首页',
               ),
-              Expanded(
-                child: Container(
-                  color: theme.colorScheme.primaryContainer,
-                  child: page,
-                ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.add),
+                label: '添加提醒',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.history),
+                label: '历史记录',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.settings),
+                label: '设置',
               ),
             ],
           ),

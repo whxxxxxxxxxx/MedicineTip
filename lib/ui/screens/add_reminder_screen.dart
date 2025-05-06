@@ -21,17 +21,20 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
   final _medicineNameController = TextEditingController();
   final _dosageController = TextEditingController();
   final _unitController = TextEditingController();
+  final _textInputController = TextEditingController(); // <-- Add this line
   
   final List<TimeOfDay> _scheduledTimes = [TimeOfDay(hour: 8, minute: 0)];
   bool _isProcessing = false;
   bool _isVoiceInputMode = false;
-  String _voiceInputStatus = '点击麦克风开始录音';
+  bool _isRecording = false;
+  String _voiceInputStatus = '按住说话';
 
   @override
   void dispose() {
     _medicineNameController.dispose();
     _dosageController.dispose();
     _unitController.dispose();
+    _textInputController.dispose(); // <-- And dispose it here
     super.dispose();
   }
 
@@ -53,11 +56,16 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
       
       // 处理时间
       if (result['scheduledTimes'] != null && result['scheduledTimes'] is List) {
-        final times = result['scheduledTimes'] as List<DateTime>;
+        final times = result['scheduledTimes'] as List;
         setState(() {
           _scheduledTimes.clear();
-          for (final time in times) {
-            _scheduledTimes.add(TimeOfDay(hour: time.hour, minute: time.minute));
+          for (final timeStr in times) {
+            try {
+              final dt = DateTime.parse(timeStr);
+              _scheduledTimes.add(TimeOfDay(hour: dt.hour, minute: dt.minute));
+            } catch (_) {
+              // 解析失败时跳过
+            }
           }
           if (_scheduledTimes.isEmpty) {
             _scheduledTimes.add(const TimeOfDay(hour: 8, minute: 0));
@@ -78,28 +86,48 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
   }
 
   Future<void> _startVoiceRecording() async {
-    // TODO: 实现语音录制功能
     setState(() {
+      _isRecording = true;
       _voiceInputStatus = '正在录音...';
     });
     
-    // 模拟录音过程
-    await Future.delayed(const Duration(seconds: 2));
+    try {
+      // TODO: 开始录音并建立WebSocket连接
+      await Future.delayed(const Duration(seconds: 1));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('录音失败: $e')),
+        );
+      }
+    }    
+  }
+
+  Future<void> _stopVoiceRecording() async {
+    if (!_isRecording) return;
     
     setState(() {
+      _isRecording = false;
       _voiceInputStatus = '正在处理语音...';
     });
     
-    // 模拟语音处理
-    await Future.delayed(const Duration(seconds: 1));
-    
-    // 模拟解析结果
-    await _processTextInput('每天早上8点吃阿司匹林一片');
-    
-    setState(() {
-      _voiceInputStatus = '点击麦克风开始录音';
-      _isVoiceInputMode = false;
-    });
+    try {
+      // TODO: 停止录音并关闭WebSocket连接
+      await Future.delayed(const Duration(seconds: 1));
+      await _processTextInput('每天早上8点吃阿司匹林一片');
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('处理失败: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _voiceInputStatus = '按住说话';
+        });
+      }
+    }
   }
 
   Future<void> _saveReminder() async {
@@ -169,6 +197,7 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
               setState(() {
                 _isVoiceInputMode = !_isVoiceInputMode;
               });
+              
             },
           ),
         ],
@@ -188,13 +217,26 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
           ),
           const SizedBox(height: 32),
           GestureDetector(
-            onTap: _startVoiceRecording,
+            onTapDown: (_) => _startVoiceRecording(),
+            onTapUp: (_) => _stopVoiceRecording(),
+            onTapCancel: () => _stopVoiceRecording(),
             child: Container(
               width: 80,
               height: 80,
               decoration: BoxDecoration(
-                color: Theme.of(context).primaryColor,
+                color: _isRecording 
+                  ? Theme.of(context).primaryColor.withOpacity(0.7)
+                  : Theme.of(context).primaryColor,
                 shape: BoxShape.circle,
+                boxShadow: _isRecording
+                  ? [
+                      BoxShadow(
+                        color: Theme.of(context).primaryColor.withOpacity(0.3),
+                        blurRadius: 10,
+                        spreadRadius: 5,
+                      )
+                    ]
+                  : null,
               ),
               child: const Icon(
                 Icons.mic,
@@ -231,6 +273,24 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
               ),
               maxLines: 3,
               onFieldSubmitted: _processTextInput,
+              controller: _textInputController, // 新增：用于获取文本内容
+            ),
+            const SizedBox(height: 8),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.auto_fix_high),
+              label: const Text('智能解析并填写'),
+              onPressed: _isProcessing
+                  ? null
+                  : () {
+                      final text = _textInputController.text.trim();
+                      if (text.isNotEmpty) {
+                        _processTextInput(text);
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('请输入描述后再解析')),
+                        );
+                      }
+                    },
             ),
             const SizedBox(height: 16),
             

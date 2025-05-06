@@ -7,13 +7,20 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
+import 'package:medicinetip/services/reminder_service.dart';
+import 'package:medicinetip/services/storage_service.dart';
 import 'package:medicinetip/main.dart';
 
 void main() {
   testWidgets('Counter increments smoke test', (WidgetTester tester) async {
     // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+    final storageService = StorageService();
+    storageService.init();
+    final reminderService = ReminderService(
+      storageService: storageService,
+    );
+    reminderService.init();
+    await tester.pumpWidget(MyApp(reminderService : reminderService));
 
     // Verify that our counter starts at 0.
     expect(find.text('0'), findsOneWidget);

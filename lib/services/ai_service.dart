@@ -1,6 +1,21 @@
 
+import 'dart:async';
+import 'dart:convert';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/status.dart' as ws_status;
+import 'package:http/http.dart' as http;
+
 /// AI服务类，用于解析用户输入的药物信息
 class AIService {
+  final String? apiKey;
+  WebSocketChannel? _channel;
+  StreamController<List<int>>? _audioStreamController;
+  bool _isRecording = false;
+  StreamSubscription? _wsSubscription;
+
+  AIService() : apiKey = dotenv.env['API_KEY'];
+
   /// 解析用户输入的文本，提取药物信息
   /// 
   /// 参数:
@@ -8,94 +23,232 @@ class AIService {
   /// 
   /// 返回: 解析后的药物信息Map
   Future<Map<String, dynamic>> parseTextInput(String input) async {
-    // TODO: 实现与AI服务的实际集成
-    // 这里是模拟的解析结果
-    await Future.delayed(const Duration(seconds: 1)); // 模拟网络请求
-    
-    // 简单的解析逻辑，实际应用中应该调用AI API
-    final result = {
-      'medicineName': _extractMedicineName(input),
-      'dosage': _extractDosage(input),
-      'unit': _extractUnit(input),
-      'scheduledTimes': _extractScheduledTimes(input),
-      'notes': input,
+    // 优化后的提示词，要求AI严格输出指定JSON格式
+    final apiKey = dotenv.env['API_KEY'];
+    final url = Uri.parse('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions');
+    final headers = {
+      'Authorization': 'Bearer $apiKey',
+      'Content-Type': 'application/json',
     };
-    
-    return result;
+    final body = jsonEncode({
+      "model": "qwen-plus",
+      "messages": [
+        {
+          "role": "system",
+          "content":
+              "你是一个药物信息解析助手，请从用户输入中提取药品名、剂量、单位、服药时间和备注，并严格以如下JSON格式返回：{\"medicineName\":\"药品名\",\"dosage\":\"剂量\",\"unit\":\"单位\",\"scheduledTimes\":[\"2024-06-01T08:00:00\"],\"notes\":\"备注\"}。scheduledTimes必须为字符串数组，时间为ISO8601格式，所有字段都必须有。不要输出多余内容。"
+        },
+        {
+          "role": "user",
+          "content": "用户输入：$input"
+        }
+      ]
+    });
+
+    try {
+      final response = await http.post(url, headers: headers, body: body);
+      if (response.statusCode == 200) {
+        // final data = jsonDecode(response.body);
+        final bodyString = utf8.decode(response.bodyBytes);
+        final data = jsonDecode(bodyString);
+        print(data);  
+        final aiContentRaw = data['choices']?[0]?['message']?['content'] ?? '';
+        // 去除 markdown 代码块包裹
+        final aiContent = aiContentRaw.replaceAll(RegExp(r'```json|```'), '').trim();
+        Map<String, dynamic> result;
+        try {
+          result = jsonDecode(aiContent);
+          // 字段类型校验与转换
+          if (result['scheduledTimes'] is List) {
+            result['scheduledTimes'] = (result['scheduledTimes'] as List)
+                .map((e) => e is String ? e : (e is DateTime ? e.toIso8601String() : e.toString()))
+                .toList();
+          } else {
+            result['scheduledTimes'] = [];
+          }
+        } catch (_) {
+          // 本地兜底解析，所有字段都保证有，scheduledTimes为字符串数组
+          final times = _extractScheduledTimes(aiContent.isNotEmpty ? aiContent : input);
+          result = {
+            'medicineName': _extractMedicineName(aiContent.isNotEmpty ? aiContent : input),
+            'dosage': _extractDosage(aiContent.isNotEmpty ? aiContent : input),
+            'unit': _extractUnit(aiContent.isNotEmpty ? aiContent : input),
+            'scheduledTimes': times.map((dt) => dt.toIso8601String()).toList(),
+            'notes': '',
+          };
+        }
+        // 保证所有字段都存在
+        result['medicineName'] ??= '';
+        result['dosage'] ??= '';
+        result['unit'] ??= '';
+        result['scheduledTimes'] ??= [];
+        result['notes'] ??= '';
+        print(result);
+        return result;
+      } else {
+        throw Exception('AI服务请求失败: ${response.statusCode} ${response.body}');
+      }
+    } catch (e) {
+      print('AI服务调用异常: $e');
+      // 本地兜底解析，所有字段都保证有，scheduledTimes为字符串数组
+      final times = _extractScheduledTimes(input);
+      final result = {
+        'medicineName': _extractMedicineName(input),
+        'dosage': _extractDosage(input),
+        'unit': _extractUnit(input),
+        'scheduledTimes': times.map((dt) => dt.toIso8601String()).toList(),
+        'notes': input,
+      };
+      return result;
+    }
   }
   
-  /// 解析用户的语音输入
-  /// 
-  /// 参数:
-  /// - [audioBytes]: 语音数据的字节数组
-  /// 
-  /// 返回: 解析后的药物信息Map
-  Future<Map<String, dynamic>> parseVoiceInput(List<int> audioBytes) async {
-    // TODO: 实现语音转文本，然后调用文本解析
-    // 这里是模拟的解析结果
-    await Future.delayed(const Duration(seconds: 2)); // 模拟网络请求
-    
-    // 模拟语音转文本
-    const text = "每天早上8点吃阿司匹林一片";
-    
-    // 调用文本解析
-    return parseTextInput(text);
+  /// 初始化WebSocket连接
+  Future<void> _initWebSocket() async {
+    final wsUrl = Uri.parse('wss://dashscope.aliyuncs.com/api-ws/v1/inference');
+    final headers = {
+      'Authorization': 'Bearer $apiKey',
+      'User-Agent': 'MedicineTip/1.0',
+      'Content-Type': 'application/json',
+    };
+
+    _channel = WebSocketChannel.connect(
+      wsUrl,
+      protocols: [jsonEncode(headers)],
+    )..sink.add(jsonEncode({
+      'type': 'start',
+      'format': 'wav',
+      'sampleRate': 16000,
+      'enableVad': true,
+    }));
+
+    _setupWebSocketListeners();
   }
-  
-  // 以下是简单的文本解析辅助方法，实际应用中应该使用更复杂的NLP或AI模型
-  
-  String _extractMedicineName(String input) {
-    // 简单示例：提取可能的药物名称
-    final medicines = ['阿司匹林', '布洛芬', '感冒药', '维生素C', '降压药'];
-    for (final medicine in medicines) {
-      if (input.contains(medicine)) {
-        return medicine;
+
+  /// 设置WebSocket消息监听器
+  void _setupWebSocketListeners() {
+    _wsSubscription = _channel?.stream.listen(
+      (message) {
+        // 处理服务器返回的消息
+        print('Received: $message');
+      },
+      onError: (error) {
+        print('WebSocket error: $error');
+        stopRecording();
+      },
+      onDone: () {
+        print('WebSocket connection closed');
+        stopRecording();
+      },
+    );
+  }
+
+  /// 开始语音录制
+  Future<void> startRecording() async {
+    if (_isRecording) return;
+    
+    try {
+      await _initWebSocket();
+
+      // 初始化音频流控制器
+      _audioStreamController = StreamController<List<int>>();
+      _isRecording = true;
+
+    } catch (e) {
+      print('Error starting recording: $e');
+      await stopRecording();
+      rethrow;
+    }
+  }
+
+  /// 停止语音录制
+  Future<void> stopRecording() async {
+    if (!_isRecording) return;
+
+    try {
+      _isRecording = false;
+
+      // 发送结束消息
+      if (_channel != null) {
+        _channel?.sink.add(jsonEncode({
+          'type': 'end',
+        }));
+      }
+
+      // 清理资源
+      await _wsSubscription?.cancel();
+      await _channel?.sink.close(ws_status.normalClosure);
+      await _audioStreamController?.close();
+
+      _wsSubscription = null;
+      _channel = null;
+      _audioStreamController = null;
+
+    } catch (e) {
+      print('Error stopping recording: $e');
+      rethrow;
+    }
+  }
+
+  /// 添加音频数据到流
+  Future<void> addAudioData(List<int> data) async {
+    if (_isRecording && _audioStreamController != null && _channel != null) {
+      _audioStreamController?.add(data);
+      // 发送音频数据
+      try {
+        _channel?.sink.add(jsonEncode({
+          'type': 'binary',
+          'data': base64Encode(data),
+        }));
+      } catch (e) {
+        print('Error sending audio data: $e');
+        await stopRecording();
+        rethrow;
       }
     }
-    return '未知药物';
   }
-  
+
+
+  // 以下是辅助方法，用于从文本中提取信息
+  String _extractMedicineName(String input) {
+    // 简单的实现，实际应该使用更复杂的算法
+    final words = input.split(' ');
+    for (var i = 0; i < words.length; i++) {
+      if (words[i].contains('吃') && i + 1 < words.length) {
+        return words[i + 1];
+      }
+    }
+    return '';
+  }
+
   String _extractDosage(String input) {
-    // 简单示例：提取剂量
-    final RegExp dosageRegex = RegExp(r'(\d+)(片|毫克|克|毫升|粒)');
-    final match = dosageRegex.firstMatch(input);
-    if (match != null) {
-      return match.group(1) ?? '1';
-    }
-    return '1'; // 默认剂量
+    // 简单的实现
+    final regex = RegExp(r'\d+');
+    final match = regex.firstMatch(input);
+    return match?.group(0) ?? '1';
   }
-  
+
   String _extractUnit(String input) {
-    // 简单示例：提取单位
-    final RegExp unitRegex = RegExp(r'\d+(片|毫克|克|毫升|粒)');
-    final match = unitRegex.firstMatch(input);
-    if (match != null) {
-      return match.group(1) ?? '片';
+    // 简单的实现
+    final units = ['片', '粒', '毫克', '克', 'mg', 'g'];
+    for (final unit in units) {
+      if (input.contains(unit)) {
+        return unit;
+      }
     }
-    return '片'; // 默认单位
+    return '片';
   }
-  
+
   List<DateTime> _extractScheduledTimes(String input) {
-    // 简单示例：提取时间
-    final List<DateTime> times = [];
+    // 简单的实现
     final now = DateTime.now();
-    
-    // 检查是否包含早上/中午/晚上的关键词
     if (input.contains('早上') || input.contains('早晨')) {
-      times.add(DateTime(now.year, now.month, now.day, 8, 0));
+      return [DateTime(now.year, now.month, now.day, 8, 0)];
+    } else if (input.contains('中午')) {
+      return [DateTime(now.year, now.month, now.day, 12, 0)];
+    } else if (input.contains('晚上')) {
+      return [DateTime(now.year, now.month, now.day, 19, 0)];
     }
-    if (input.contains('中午')) {
-      times.add(DateTime(now.year, now.month, now.day, 12, 0));
-    }
-    if (input.contains('晚上') || input.contains('傍晚')) {
-      times.add(DateTime(now.year, now.month, now.day, 19, 0));
-    }
-    
-    // 如果没有找到时间，添加默认时间
-    if (times.isEmpty) {
-      times.add(DateTime(now.year, now.month, now.day, 8, 0));
-    }
-    
-    return times;
+    return [DateTime(now.year, now.month, now.day, 8, 0)];
   }
 }

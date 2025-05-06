@@ -16,7 +16,7 @@ class AppConstants {
   static const String settingsKey = "settings";
   
   // API相关
-  static const String apiBaseUrl = "https://api.example.com";
+  static const String aliApiBaseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1";
   
   // 通知渠道
   static const String reminderChannelId = "reminder_channel";
