@@ -72,6 +72,11 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
           }
         });
       }
+      
+      // 切换到表单界面
+      setState(() {
+        _isVoiceInputMode = false;
+      });
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -207,10 +212,25 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
   }
 
   Widget _buildVoiceInputUI() {
-    return Center(
+    return SingleChildScrollView(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
+          // 文本输入模式
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: TextFormField(
+              decoration: const InputDecoration(
+                labelText: '直接输入描述（可选）',
+                hintText: '例如：每天早上8点吃阿司匹林一片',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 3,
+              onFieldSubmitted: _processTextInput,
+              controller: _textInputController,
+            ),
+          ),
+          const SizedBox(height: 32),
           Text(
             _voiceInputStatus,
             style: Theme.of(context).textTheme.titleLarge,
@@ -251,6 +271,23 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodyLarge,
           ),
+          const SizedBox(height: 32),
+          ElevatedButton.icon(
+            icon: const Icon(Icons.auto_fix_high),
+            label: const Text('智能解析并填写'),
+            onPressed: _isProcessing
+                ? null
+                : () {
+                    final text = _textInputController.text.trim();
+                    if (text.isNotEmpty) {
+                      _processTextInput(text);
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('请输入描述后再解析')),
+                      );
+                    }
+                  },
+          ),
         ],
       ),
     );
@@ -264,35 +301,6 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // 文本输入模式
-            TextFormField(
-              decoration: const InputDecoration(
-                labelText: '直接输入描述（可选）',
-                hintText: '例如：每天早上8点吃阿司匹林一片',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 3,
-              onFieldSubmitted: _processTextInput,
-              controller: _textInputController, // 新增：用于获取文本内容
-            ),
-            const SizedBox(height: 8),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.auto_fix_high),
-              label: const Text('智能解析并填写'),
-              onPressed: _isProcessing
-                  ? null
-                  : () {
-                      final text = _textInputController.text.trim();
-                      if (text.isNotEmpty) {
-                        _processTextInput(text);
-                      } else {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('请输入描述后再解析')),
-                        );
-                      }
-                    },
-            ),
-            const SizedBox(height: 16),
             
             // 药品名称
             TextFormField(
