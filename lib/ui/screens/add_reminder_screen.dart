@@ -21,21 +21,40 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
   final _medicineNameController = TextEditingController();
   final _dosageController = TextEditingController();
   final _unitController = TextEditingController();
-  final _textInputController = TextEditingController(); // <-- Add this line
+  final _textInputController = TextEditingController();
   
   final List<TimeOfDay> _scheduledTimes = [TimeOfDay(hour: 8, minute: 0)];
   bool _isProcessing = false;
   bool _isVoiceInputMode = false;
   bool _isRecording = false;
   String _voiceInputStatus = '按住说话';
+  String _recognizedText = ''; // 添加识别文本状态
+
+  @override
+  void initState() {
+    super.initState();
+    // 设置语音识别回调
+    widget.aiService.onSpeechRecognized = _updateRecognizedText;
+  }
 
   @override
   void dispose() {
     _medicineNameController.dispose();
     _dosageController.dispose();
     _unitController.dispose();
-    _textInputController.dispose(); // <-- And dispose it here
+    _textInputController.dispose();
+    // 清除回调
+    widget.aiService.onSpeechRecognized = null;
     super.dispose();
+  }
+
+  // 更新识别文本的回调函数
+  void _updateRecognizedText(String text) {
+    if (mounted) {
+      setState(() {
+        _recognizedText = text;
+      });
+    }
   }
 
   Future<void> _processTextInput(String text) async {
@@ -94,11 +113,12 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
     setState(() {
       _isRecording = true;
       _voiceInputStatus = '正在录音...';
+      _recognizedText = ''; // 清空之前的识别文本
     });
     
     try {
-      // TODO: 开始录音并建立WebSocket连接
-      await Future.delayed(const Duration(seconds: 1));
+      // 调用AI服务开始录音
+      await widget.aiService.startRecording();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -117,9 +137,21 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
     });
     
     try {
-      // TODO: 停止录音并关闭WebSocket连接
-      await Future.delayed(const Duration(seconds: 1));
-      await _processTextInput('每天早上8点吃阿司匹林一片');
+      // 停止录音
+      await widget.aiService.stopRecording();
+      
+      // 获取识别结果
+      final recognizedText = widget.aiService.getRecognizedText();
+      if (recognizedText.isNotEmpty) {
+        // 将识别结果填入文本输入框
+        _textInputController.text = recognizedText;
+        // 处理识别结果
+        await _processTextInput(recognizedText);
+      } else {
+        setState(() {
+          _voiceInputStatus = '未能识别语音，请重试';
+        });
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -230,6 +262,35 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
               controller: _textInputController,
             ),
           ),
+          
+          // 添加识别文本显示区域
+          if (_recognizedText.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+              child: Card(
+                color: Theme.of(context).primaryColor.withOpacity(0.1),
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '识别结果:',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _recognizedText,
+                        style: Theme.of(context).textTheme.bodyLarge,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          
           const SizedBox(height: 32),
           Text(
             _voiceInputStatus,

@@ -1,6 +1,8 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:isolate';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as ws_status;
@@ -13,6 +15,10 @@ class AIService {
   StreamController<List<int>>? _audioStreamController;
   bool _isRecording = false;
   StreamSubscription? _wsSubscription;
+  
+  // 添加语音识别结果回调
+Function(String)? onSpeechRecognized;
+  String _recognizedText = '';
 
   AIService() : apiKey = dotenv.env['API_KEY'];
 
@@ -108,19 +114,14 @@ class AIService {
     final wsUrl = Uri.parse('wss://dashscope.aliyuncs.com/api-ws/v1/inference');
     final headers = {
       'Authorization': 'Bearer $apiKey',
-      'User-Agent': 'MedicineTip/1.0',
-      'Content-Type': 'application/json',
+      'user-agent': 'MedicineTip/1.0',
+      "X-DashScope-DataInspection": "enable",
     };
 
     _channel = WebSocketChannel.connect(
       wsUrl,
       protocols: [jsonEncode(headers)],
-    )..sink.add(jsonEncode({
-      'type': 'start',
-      'format': 'wav',
-      'sampleRate': 16000,
-      'enableVad': true,
-    }));
+    );
 
     _setupWebSocketListeners();
   }
@@ -129,8 +130,16 @@ class AIService {
   void _setupWebSocketListeners() {
     _wsSubscription = _channel?.stream.listen(
       (message) {
-        // 处理服务器返回的消息
-        print('Received: $message');
+        // 使用compute函数在后台线程处理消息
+        compute(_processWebSocketMessage, message).then((result) {
+          if (result != null && result.isNotEmpty) {
+            _recognizedText = result;
+            // 调用回调函数通知UI更新
+            onSpeechRecognized?.call(_recognizedText);
+          }
+        }).catchError((error) {
+          print('处理WebSocket消息失败: $error');
+        });
       },
       onError: (error) {
         print('WebSocket error: $error');
@@ -142,12 +151,43 @@ class AIService {
       },
     );
   }
+  
+  /// 在后台线程中处理WebSocket消息
+  static String? _processWebSocketMessage(dynamic message) {
+    try {
+      print('Received: $message');
+      final Map<String, dynamic> data = jsonDecode(message);
+      
+      // 处理语音识别结果
+      if (data['type'] == 'transcript') {
+        final String text = data['text'] ?? '';
+        if (text.isNotEmpty) {
+          return text;
+        }
+      } else if (data['type'] == 'end') {
+        // 语音识别结束，返回特殊标记
+        return '__END__';
+      }
+    } catch (e) {
+      print('解析WebSocket消息失败: $e');
+    }
+    return null;
+  }
+
+  /// 获取当前识别的文本
+  String getRecognizedText() {
+    return _recognizedText;
+  }
 
   /// 开始语音录制
   Future<void> startRecording() async {
     if (_isRecording) return;
     
     try {
+      // 重置识别文本
+      _recognizedText = '';
+      onSpeechRecognized?.call('');
+      
       await _initWebSocket();
 
       // 初始化音频流控制器

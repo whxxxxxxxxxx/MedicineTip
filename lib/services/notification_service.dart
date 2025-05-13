@@ -60,19 +60,35 @@ class NotificationService {
 
   /// 请求通知权限
   Future<bool> requestPermission() async {
-    final platform = _notifications.resolvePlatformSpecificImplementation<
+    // 处理iOS权限申请
+    final iosPlatform = _notifications.resolvePlatformSpecificImplementation<
         IOSFlutterLocalNotificationsPlugin>();
-    if (platform != null) {
-      final result = await platform.requestPermissions(
+    if (iosPlatform != null) {
+      final result = await iosPlatform.requestPermissions(
         alert: true,
         badge: true,
         sound: true,
       );
       if (result != null) {
+        _hasPermission = result;
         return result;
       }
       return false;
     }
+    
+    // 处理Android权限申请
+    final androidPlatform = _notifications.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    if (androidPlatform != null) {
+      final result = await androidPlatform.requestNotificationsPermission();
+      if (result != null) {
+        _hasPermission = result;
+        return result;
+      }
+      return false;
+    }
+    
+    // 如果不是iOS或Android，默认返回true
     return true;
   }
 
