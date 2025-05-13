@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:timezone/data/latest.dart' as tz;
 import 'package:medicinetip/services/ai_service.dart';
 import 'package:medicinetip/services/storage_service.dart';
+import 'package:medicinetip/services/notification_service.dart';
 import 'services/reminder_service.dart';
 import 'ui/screens/home_screen.dart';
 import 'ui/screens/add_reminder_screen.dart';
@@ -12,12 +14,17 @@ import 'core/constants.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  tz.initializeTimeZones();
   await dotenv.load(fileName: ".env");
   final storageService = StorageService();
   await storageService.init();
+
+  final notificationService = NotificationService();
+  await notificationService.init();
   
   final reminderService = ReminderService(
     storageService: storageService,
+    notificationService: notificationService,
   );
   reminderService.init(); // 初始化 ReminderServic
   

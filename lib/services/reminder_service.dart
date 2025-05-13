@@ -1,10 +1,13 @@
+import 'dart:async';
 import 'package:uuid/uuid.dart';
 import '../models/reminder.dart';
 import 'storage_service.dart';
+import 'notification_service.dart';
 
 /// 提醒服务类，用于管理用药提醒
 class ReminderService {
   final StorageService _storageService;
+  final NotificationService _notificationService;
   final _uuid = const Uuid();
   
   List<Reminder> _reminders = [];
@@ -12,11 +15,28 @@ class ReminderService {
   
   ReminderService({
     required StorageService storageService,
-  }) : _storageService = storageService;
+    required NotificationService notificationService,
+  }) : _storageService = storageService,
+       _notificationService = notificationService;
   
   /// 初始化服务
   Future<void> init() async {
     await loadData();
+    await _notificationService.init();
+    await _scheduleAllReminders();
+    
+    // 每分钟检查一次提醒
+    // 计算到下一分钟0秒的时间差
+    final now = DateTime.now();
+    final secondsToNextMinute = 60 - now.second;
+    Timer(Duration(seconds: secondsToNextMinute), () {
+      // 每分钟0秒执行检查
+      _scheduleAllReminders();
+      // 设置每分钟一次的定时器
+      Timer.periodic(const Duration(minutes: 1), (_) {
+        _scheduleAllReminders();
+      });
+    });
   }
   
   /// 加载所有数据
@@ -30,6 +50,9 @@ class ReminderService {
   
   /// 获取所有服药记录
   List<MedicationRecord> get medicationRecords => List.unmodifiable(_records);
+
+  /// 获取通知服务
+  NotificationService get notificationService => _notificationService;
   
   /// 根据ID获取提醒
   Reminder? getReminderById(String id) {
@@ -58,6 +81,7 @@ class ReminderService {
     
     _reminders.add(reminder);
     await _saveReminders();
+    await _scheduleReminder(reminder);
     
     return reminder;
   }
@@ -72,6 +96,8 @@ class ReminderService {
     
     _reminders[index] = updatedReminder;
     await _saveReminders();
+    await _notificationService.cancelNotification(updatedReminder.id);
+    await _scheduleReminder(updatedReminder);
     
     return updatedReminder;
   }
@@ -91,6 +117,7 @@ class ReminderService {
     
     await _saveReminders();
     await _saveMedicationRecords();
+    await _notificationService.cancelNotification(id);
     print('删除操作完成，数据已保存');
   }
   
@@ -134,5 +161,33 @@ class ReminderService {
   /// 保存服药记录到存储
   Future<void> _saveMedicationRecords() async {
     await _storageService.saveMedicationRecords(_records);
+  }
+
+  /// 调度所有提醒的通知
+  Future<void> _scheduleAllReminders() async {
+    for (final reminder in _reminders) {
+      await _scheduleReminder(reminder);
+    }
+  }
+
+  /// 检查并发送提醒通知
+  Future<void> _scheduleReminder(Reminder reminder) async {
+    final now = DateTime.now();
+    print('当前时间: $now');
+    for (final time in reminder.scheduledTimes) {
+      print('提醒时间: $time');
+      // 如果当前时间在预定时间的前后1分钟内，发送通知
+      final difference = time.difference(now).inMinutes.abs();
+      print('时间差: $difference');
+      if (difference < 1) {
+        print('发送通知: ${reminder.medicineName} ${reminder.dosage}${reminder.unit}');
+        await _notificationService.scheduleReminder(
+          id: reminder.id,
+          title: '用药提醒',
+          body: '该服用 ${reminder.medicineName} ${reminder.dosage}${reminder.unit} 了',
+          scheduledTime: time,
+        );
+      }
+    }
   }
 }
