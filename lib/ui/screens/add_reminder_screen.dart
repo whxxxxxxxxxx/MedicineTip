@@ -235,6 +235,16 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
                 _isVoiceInputMode = !_isVoiceInputMode;
               });
               
+              // 如果切换到语音输入模式，则初始化WebSocket
+              if (_isVoiceInputMode) {
+                widget.aiService.initWebSocket().catchError((e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('初始化语音服务失败: $e')),
+                    );
+                  }
+                });
+              }
             },
           ),
         ],

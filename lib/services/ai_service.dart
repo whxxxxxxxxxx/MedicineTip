@@ -7,6 +7,9 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as ws_status;
 import 'package:http/http.dart' as http;
+import 'dart:io';
+import 'package:web_socket_channel/io.dart';
+import 'package:uuid/uuid.dart';
 
 /// AI服务类，用于解析用户输入的药物信息
 class AIService {
@@ -15,6 +18,7 @@ class AIService {
   StreamController<List<int>>? _audioStreamController;
   bool _isRecording = false;
   StreamSubscription? _wsSubscription;
+  Timer? _heartbeatTimer;
   
   // 添加语音识别结果回调
 Function(String)? onSpeechRecognized;
@@ -110,20 +114,126 @@ Function(String)? onSpeechRecognized;
   }
   
   /// 初始化WebSocket连接
-  Future<void> _initWebSocket() async {
-    final wsUrl = Uri.parse('wss://dashscope.aliyuncs.com/api-ws/v1/inference');
-    final headers = {
-      'Authorization': 'Bearer $apiKey',
-      'user-agent': 'MedicineTip/1.0',
-      "X-DashScope-DataInspection": "enable",
-    };
+  Future<void> initWebSocket() async {
+    if (_channel != null) {
+      print('WebSocket已经初始化，跳过连接');
+      return; // 如果已经初始化，则直接返回
+    }
+    
+    print('开始初始化WebSocket连接...');
+    // 确保API key存在
+    if (apiKey == null || apiKey!.isEmpty) {
+      print('WebSocket连接失败: API key为空');
+      throw Exception('API key为空，无法建立WebSocket连接');
+    }
+    
+    // 打印部分API key用于调试（只显示前4位和后4位）
+    final maskedKey = apiKey!.length > 8 
+        ? '${apiKey!.substring(0, 4)}...${apiKey!.substring(apiKey!.length - 4)}'
+        : '***';
+    print('使用API key: $maskedKey');
+    
+    try {
+      // 导入必要的包
 
-    _channel = WebSocketChannel.connect(
-      wsUrl,
-      protocols: [jsonEncode(headers)],
-    );
+      
+      // 使用dart:io的WebSocket类，可以直接传递headers
+      final socket = await WebSocket.connect(
+        'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+        headers: {
+          'Authorization': 'Bearer $apiKey',
+          'user-agent': 'MedicineTip/1.0',
+          'X-DashScope-DataInspection': 'enable',
+        },
+      );
+      
+      // 使用IOWebSocketChannel包装socket
+      _channel = IOWebSocketChannel(socket);
+      
+      print('WebSocket连接已建立，认证信息已通过HTTP头传递');
+      
+      // 启动心跳定时器，每30秒发送一次心跳包
+      _startHeartbeat();
+      
+      _setupWebSocketListeners();
+      _sendStartMessage();
+    } catch (e) {
+      print('WebSocket连接失败: $e');
+      _channel = null;
+      rethrow;
+    }
+  }
+    /// 发送开始语音识别任务的消息
+  void _sendStartMessage() {
+    if (_channel == null) {
+      print('WebSocket未连接，无法发送开始消息');
+      return;
+    }
+    
+    try {
+      // 生成随机UUID作为任务ID
+      final taskId = _generateUuid();
+      // 构建run-task消息
+      final message = {
+        'header': {
+          'action': 'run-task',
+          'task_id': taskId,
+          'streaming': 'duplex'
+        },
+        'payload': {
+          'task_group': 'audio',
+          'task': 'asr',
+          'function': 'recognition',
+          'model': 'paraformer-realtime-v2',
+          'parameters': {
+            'format': 'pcm',
+            'sample_rate': 16000,
+            'disfluency_removal_enabled': false,
+            'language_hints': ['zh'] // 使用中文作为默认语言
+          },
+          'input': {}
+        }
+      };
+      
+      // 发送消息
+      print('发送语音识别任务开始消息: $taskId');
+      _channel?.sink.add(jsonEncode(message));
+    } catch (e) {
+      print('发送开始消息失败: $e');
+    }
+  }
+  
+  /// 生成随机UUID
+  String _generateUuid() {
+    final _uuid = Uuid();
+    return _uuid.v4();
+  }
 
-    _setupWebSocketListeners();
+
+  /// 启动心跳定时器
+  void _startHeartbeat() {
+    // 取消已有的心跳定时器
+    _heartbeatTimer?.cancel();
+    
+    // 创建新的心跳定时器，每30秒发送一次心跳包
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+      if (_channel != null) {
+        try {
+          print('发送WebSocket心跳包...');
+          _channel?.sink.add(jsonEncode({
+            'type': 'ping',
+            'timestamp': DateTime.now().millisecondsSinceEpoch
+          }));
+        } catch (e) {
+          print('发送心跳包失败: $e');
+          _heartbeatTimer?.cancel();
+        }
+      } else {
+        // 如果通道已关闭，取消定时器
+        timer.cancel();
+        _heartbeatTimer = null;
+      }
+    });
   }
 
   /// 设置WebSocket消息监听器
@@ -168,6 +278,21 @@ Function(String)? onSpeechRecognized;
         // 语音识别结束，返回特殊标记
         return '__END__';
       }
+      
+      // 处理任务状态消息
+      if (data['header'] != null && data['payload'] != null) {
+        final header = data['header'];
+        final event = header['event'];
+        final taskId = header['task_id'];
+        
+        if (event == 'task-started') {
+          print('语音识别任务已开始，任务ID: $taskId');
+        } else if (event == 'task-completed') {
+          print('语音识别任务已完成，任务ID: $taskId');
+        } else if (event == 'task-failed') {
+          print('语音识别任务失败，任务ID: $taskId，原因: ${data['payload']['error'] ?? "未知错误"}');
+        }
+      }
     } catch (e) {
       print('解析WebSocket消息失败: $e');
     }
@@ -188,7 +313,8 @@ Function(String)? onSpeechRecognized;
       _recognizedText = '';
       onSpeechRecognized?.call('');
       
-      await _initWebSocket();
+      // 确保WebSocket已初始化
+      await initWebSocket();
 
       // 初始化音频流控制器
       _audioStreamController = StreamController<List<int>>();
@@ -214,6 +340,10 @@ Function(String)? onSpeechRecognized;
           'type': 'end',
         }));
       }
+
+      // 取消心跳定时器
+      _heartbeatTimer?.cancel();
+      _heartbeatTimer = null;
 
       // 清理资源
       await _wsSubscription?.cancel();
@@ -292,3 +422,4 @@ Function(String)? onSpeechRecognized;
     return [DateTime(now.year, now.month, now.day, 8, 0)];
   }
 }
+
