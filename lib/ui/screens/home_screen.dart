@@ -18,10 +18,48 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Reminder> _reminders = [];
   bool _isLoading = true;
 
+  bool _hasNotificationPermission = false;
+
   @override
   void initState() {
     super.initState();
+    _checkNotificationPermission();
     _loadReminders();
+  }
+
+  Future<void> _checkNotificationPermission() async {
+    final hasPermission = await widget.reminderService.notificationService.checkPermissionStatus();
+    setState(() {
+      _hasNotificationPermission = hasPermission;
+    });
+
+    if (!hasPermission) {
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('需要通知权限'),
+            content: const Text('为了确保您能及时收到用药提醒，请在系统设置中开启通知权限。'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('稍后再说'),
+              ),
+              TextButton(
+                onPressed: () async {
+                  Navigator.of(context).pop();
+                  final granted = await widget.reminderService.notificationService.requestPermission();
+                  setState(() {
+                    _hasNotificationPermission = granted;
+                  });
+                },
+                child: const Text('去开启'),
+              ),
+            ],
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _loadReminders() async {
