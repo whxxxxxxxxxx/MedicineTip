@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../services/reminder_service.dart';
 import '../../services/ai_service.dart';
 
@@ -52,7 +53,10 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
   void _updateRecognizedText(String text) {
     if (mounted) {
       setState(() {
-        _recognizedText = text;
+        // 保留中间结果的标点符号处理
+        _recognizedText = text.replaceAll(' ，', '，') // 处理标点空格
+                            .replaceAll(' 。', '。')
+                            .replaceAll(' 、', '、');
       });
     }
   }
@@ -110,6 +114,20 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
   }
 
   Future<void> _startVoiceRecording() async {
+    // 先检查麦克风权限
+    final hasPermission = await widget.aiService.checkMicrophonePermission();
+    if (!hasPermission) {
+      // 请求麦克风权限
+      final permissionGranted = await widget.aiService.requestMicrophonePermission();
+      if (!permissionGranted) {
+        if (mounted) {
+          // 显示权限设置对话框
+          _showPermissionDialog();
+          return;
+        }
+      }
+    }
+    
     setState(() {
       _isRecording = true;
       _voiceInputStatus = '正在录音...';
@@ -126,6 +144,52 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
         );
       }
     }    
+  }
+  
+  // 显示权限设置对话框
+  void _showPermissionDialog() {
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('需要麦克风权限'),
+          content: const SingleChildScrollView(
+            child: ListBody(
+              children: <Widget>[
+                Text('为了使用语音输入功能，我们需要访问您的麦克风。'),
+                Text('请在设置中允许麦克风权限。'),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('取消'),
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+            ),
+            TextButton(
+              child: const Text('去设置'),
+              onPressed: () {
+                Navigator.of(context).pop();
+                _openAppSettings();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+  
+  // 打开应用设置页面
+  Future<void> _openAppSettings() async {
+    try {
+      final MethodChannel channel = MethodChannel('com.medicinetip.app/microphone');
+      await channel.invokeMethod('openAppSettings');
+    } catch (e) {
+      print('打开应用设置失败: $e');
+    }
   }
 
   Future<void> _stopVoiceRecording() async {
@@ -273,40 +337,53 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
             ),
           ),
           
-          // 添加识别文本显示区域
-          if (_recognizedText.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              child: Card(
-                color: Theme.of(context).primaryColor.withOpacity(0.1),
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '识别结果:',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
+          // 识别文本显示区域 - 始终显示，即使为空
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: Card(
+              color: Theme.of(context).primaryColor.withOpacity(0.1),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '实时识别结果:',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _recognizedText,
-                        style: Theme.of(context).textTheme.bodyLarge,
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(8.0),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8.0),
+                        border: Border.all(color: Colors.grey.shade300),
                       ),
-                    ],
-                  ),
+                      child: _recognizedText.isEmpty
+                        ? Text(
+                            _isRecording ? '正在聆听...' : '等待语音输入...',
+                            style: TextStyle(color: Colors.grey.shade600, fontStyle: FontStyle.italic),
+                          )
+                        : Text(
+                            _recognizedText,
+                            style: Theme.of(context).textTheme.bodyLarge,
+                          ),
+                    ),
+                  ],
                 ),
               ),
             ),
+          ),
           
-          const SizedBox(height: 32),
+          const SizedBox(height: 24),
           Text(
             _voiceInputStatus,
             style: Theme.of(context).textTheme.titleLarge,
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: 24),
           GestureDetector(
             onTapDown: (_) => _startVoiceRecording(),
             onTapUp: (_) => _stopVoiceRecording(),
@@ -336,13 +413,13 @@ class _AddReminderScreenState extends State<AddReminderScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: 24),
           Text(
             '请说出您的用药提醒信息，例如：\n"每天早上8点吃阿司匹林一片"',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodyLarge,
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: 24),
           ElevatedButton.icon(
             icon: const Icon(Icons.auto_fix_high),
             label: const Text('智能解析并填写'),

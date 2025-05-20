@@ -1,8 +1,8 @@
-
 import 'dart:async';
 import 'dart:convert';
 import 'dart:isolate';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as ws_status;
@@ -10,19 +10,23 @@ import 'package:http/http.dart' as http;
 import 'dart:io';
 import 'package:web_socket_channel/io.dart';
 import 'package:uuid/uuid.dart';
+import 'package:flutter_sound/flutter_sound.dart';
 
 /// AI服务类，用于解析用户输入的药物信息
 class AIService {
   final String? apiKey;
   WebSocketChannel? _channel;
-  StreamController<List<int>>? _audioStreamController;
+  StreamController<Uint8List>? _audioStreamController;
   bool _isRecording = false;
   StreamSubscription? _wsSubscription;
   Timer? _heartbeatTimer;
+  String uuid = '';
+  FlutterSoundRecorder recorderModule = FlutterSoundRecorder();
   
   // 添加语音识别结果回调
-Function(String)? onSpeechRecognized;
+  ValueChanged<String>? onSpeechRecognized;
   String _recognizedText = '';
+  StreamSubscription? _audioStreamSubscription;  // 添加音频流订阅的引用
 
   AIService() : apiKey = dotenv.env['API_KEY'];
 
@@ -134,9 +138,6 @@ Function(String)? onSpeechRecognized;
     print('使用API key: $maskedKey');
     
     try {
-      // 导入必要的包
-
-      
       // 使用dart:io的WebSocket类，可以直接传递headers
       final socket = await WebSocket.connect(
         'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
@@ -172,12 +173,12 @@ Function(String)? onSpeechRecognized;
     
     try {
       // 生成随机UUID作为任务ID
-      final taskId = _generateUuid();
+      uuid = _generateUuid();
       // 构建run-task消息
       final message = {
         'header': {
           'action': 'run-task',
-          'task_id': taskId,
+          'task_id': uuid,
           'streaming': 'duplex'
         },
         'payload': {
@@ -189,14 +190,18 @@ Function(String)? onSpeechRecognized;
             'format': 'pcm',
             'sample_rate': 16000,
             'disfluency_removal_enabled': false,
-            'language_hints': ['zh'] // 使用中文作为默认语言
+            'enable_punctuation': true,  // 启用标点符号预测
+            'enable_inverse_text_normalization': true,  // 启用逆文本正则化
+            'language_hints': ['zh'],  // 使用中文作为默认语言
+            'hot_words': [],  // 可以添加热词提高识别准确率
+            'hot_words_weight': 0.8  // 热词权重
           },
           'input': {}
         }
       };
       
       // 发送消息
-      print('发送语音识别任务开始消息: $taskId');
+      print('发送语音识别任务开始消息: $uuid');
       _channel?.sink.add(jsonEncode(message));
     } catch (e) {
       print('发送开始消息失败: $e');
@@ -213,16 +218,22 @@ Function(String)? onSpeechRecognized;
   /// 启动心跳定时器
   void _startHeartbeat() {
     // 取消已有的心跳定时器
-    _heartbeatTimer?.cancel();
+    _heartbeatTimer?.cancel(); // 需要增加定时器判空逻辑
     
-    // 创建新的心跳定时器，每30秒发送一次心跳包
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
-      if (_channel != null) {
+      // 建议增加连接状态检查
+      if (_channel != null && _channel!.closeCode == null) {
         try {
           print('发送WebSocket心跳包...');
+          // 构建心跳消息
           _channel?.sink.add(jsonEncode({
-            'type': 'ping',
-            'timestamp': DateTime.now().millisecondsSinceEpoch
+            'header': {
+              'action': 'ping'
+            },
+            'payload': {
+              'timestamp': DateTime.now().millisecondsSinceEpoch,
+              "input": {}
+            }
           }));
         } catch (e) {
           print('发送心跳包失败: $e');
@@ -238,32 +249,39 @@ Function(String)? onSpeechRecognized;
 
   /// 设置WebSocket消息监听器
   void _setupWebSocketListeners() {
+    _wsSubscription?.cancel();
     _wsSubscription = _channel?.stream.listen(
-      (message) {
-        // 使用compute函数在后台线程处理消息
-        compute(_processWebSocketMessage, message).then((result) {
+          (message) {
+        try {
+          // 直接调用处理方法（在主线程执行）
+          final result = _processWebSocketMessage(message);
+
           if (result != null && result.isNotEmpty) {
-            _recognizedText = result;
-            // 调用回调函数通知UI更新
-            onSpeechRecognized?.call(_recognizedText);
+            if (result == '__END__') {
+              print('语音识别结束');
+            } else {
+              _recognizedText = result;
+              onSpeechRecognized?.call(_recognizedText); // 直接更新 UI 相关变量（主线程安全）
+            }
           }
-        }).catchError((error) {
+        } catch (error) {
           print('处理WebSocket消息失败: $error');
-        });
+          stopRecording(); // 错误处理
+        }
       },
       onError: (error) {
-        print('WebSocket error: $error');
+        print('WebSocket连接错误: $error');
         stopRecording();
       },
       onDone: () {
-        print('WebSocket connection closed');
+        print('WebSocket连接关闭');
         stopRecording();
       },
     );
   }
   
   /// 在后台线程中处理WebSocket消息
-  static String? _processWebSocketMessage(dynamic message) {
+  String? _processWebSocketMessage(dynamic message) {
     try {
       print('Received: $message');
       final Map<String, dynamic> data = jsonDecode(message);
@@ -287,11 +305,41 @@ Function(String)? onSpeechRecognized;
         
         if (event == 'task-started') {
           print('语音识别任务已开始，任务ID: $taskId');
-        } else if (event == 'task-completed') {
+        } else if (event == 'task-completed' || event == 'task-finished') {
           print('语音识别任务已完成，任务ID: $taskId');
+          return '__END__';
         } else if (event == 'task-failed') {
           print('语音识别任务失败，任务ID: $taskId，原因: ${data['payload']['error'] ?? "未知错误"}');
+        } else if (event == 'result-generated') {
+          // 处理实时语音识别结果
+          final payload = data['payload'];
+          if (payload != null && payload['output']?['sentence'] != null) {
+            final sentence = payload['output']['sentence'];
+            final String text = sentence['text'] ?? '';
+            final bool isFinal = sentence['end_time'] != null;
+
+            if (text.isNotEmpty) {
+              print('${isFinal ? '最终' : '中间'}识别结果: $text');
+              // 实时更新识别文本（包括中间结果）
+              if (onSpeechRecognized != null) {
+                onSpeechRecognized!(text);
+              }
+              // 仅当最终结果时返回完整文本
+              return isFinal ? text : null; 
+            }
+          }
+        } else if (event == 'ping-response' || event == 'pong') {
+          // 心跳响应
+          print('收到心跳响应');
+        } else {
+          // 处理其他未知事件
+          print('收到未知事件: $event, 任务ID: $taskId');
         }
+      }
+      
+      // 处理心跳响应
+      if (data['type'] == 'pong') {
+        print('收到心跳响应: ${data['timestamp']}');
       }
     } catch (e) {
       print('解析WebSocket消息失败: $e');
@@ -302,6 +350,38 @@ Function(String)? onSpeechRecognized;
   /// 获取当前识别的文本
   String getRecognizedText() {
     return _recognizedText;
+  }
+
+  void setupAudioStreamListener() {
+    // 先取消之前的订阅
+    _audioStreamSubscription?.cancel();
+    _audioStreamSubscription = null;
+
+    if (_audioStreamController != null) {
+      _audioStreamSubscription = _audioStreamController!.stream.listen(
+        (Uint8List data) {
+          sendAudioDataViaWebSocket(data);
+        },
+        onError: (error) {
+          print('音频流发生错误: $error');
+          stopRecording();
+        },
+        cancelOnError: true,
+      );
+    }
+  }
+
+  Future<void> sendAudioDataViaWebSocket(Uint8List data) async {
+    if (_isRecording && _channel != null) {
+      try {
+        _channel!.sink.add(data);
+        print('发送了 ${data.length} 字节的音频数据');
+      } catch (e) {
+        print('发送音频数据时出错: $e');
+        await stopRecording();
+        rethrow;
+      }
+    }
   }
 
   /// 开始语音录制
@@ -316,14 +396,102 @@ Function(String)? onSpeechRecognized;
       // 确保WebSocket已初始化
       await initWebSocket();
 
-      // 初始化音频流控制器
-      _audioStreamController = StreamController<List<int>>();
+      // 先创建音频流控制器
+      _audioStreamController = StreamController<Uint8List>();
+      setupAudioStreamListener();
+
+      //开启录音
+      await recorderModule.openRecorder();
+      //设置订阅计时器
+      await recorderModule.setSubscriptionDuration(const Duration(milliseconds: 10));
       _isRecording = true;
+
+      await recorderModule.startRecorder(
+        toStream: _audioStreamController!.sink,
+        codec: Codec.pcm16,
+        sampleRate: 16000,
+        numChannels: 1,
+        audioSource: AudioSource.microphone,
+      );
 
     } catch (e) {
       print('Error starting recording: $e');
       await stopRecording();
       rethrow;
+    }
+  }
+
+
+  
+  /// 检查麦克风权限
+  Future<bool> checkMicrophonePermission() async {
+    try {
+      final MethodChannel channel = MethodChannel('com.medicinetip.app/microphone');
+      final bool? result = await channel.invokeMethod('checkMicrophonePermission');
+      return result ?? false;
+    } catch (e) {
+      print('检查麦克风权限失败: $e');
+      return false;
+    }
+  }
+  
+  /// 请求麦克风权限
+  Future<bool> requestMicrophonePermission() async {
+    try {
+      final MethodChannel channel = MethodChannel('com.medicinetip.app/microphone');
+      final bool? result = await channel.invokeMethod('requestMicrophonePermission');
+      return result ?? false;
+    } catch (e) {
+      print('请求麦克风权限失败: $e');
+      return false;
+    }
+  }
+
+  /// 释放所有资源
+  Future<void> dispose() async {
+    await stopRecording();
+    await _cleanupResources();
+  }
+
+  /// 清理所有资源
+  Future<void> _cleanupResources() async {
+    // 取消音频流订阅
+    await _audioStreamSubscription?.cancel();
+    _audioStreamSubscription = null;
+
+    // 取消心跳定时器
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+
+    // 取消WebSocket订阅
+    await _wsSubscription?.cancel();
+    _wsSubscription = null;
+
+    // 关闭WebSocket连接
+    if (_channel != null) {
+      try {
+        await _channel!.sink.close(ws_status.normalClosure);
+      } catch (e) {
+        print('关闭WebSocket连接时出错: $e');
+      }
+      _channel = null;
+    }
+
+    // 关闭音频流控制器
+    if (_audioStreamController != null) {
+      try {
+        await _audioStreamController!.close();
+      } catch (e) {
+        print('关闭音频流控制器时出错: $e');
+      }
+      _audioStreamController = null;
+    }
+
+    // 关闭录音器
+    try {
+      await recorderModule.closeRecorder();
+    } catch (e) {
+      print('关闭录音器时出错: $e');
     }
   }
 
@@ -334,25 +502,30 @@ Function(String)? onSpeechRecognized;
     try {
       _isRecording = false;
 
-      // 发送结束消息
+      // 发送结束任务消息
       if (_channel != null) {
-        _channel?.sink.add(jsonEncode({
-          'type': 'end',
-        }));
+        try {
+          // 发送finish-task消息通知服务端结束任务
+          _channel?.sink.add(jsonEncode({
+            'header': {
+              'action': 'finish-task',
+              'task_id': uuid,
+              'streaming': 'duplex'
+            },
+            'payload':{
+              "input": {}
+            }
+          }));
+          
+          // 等待一小段时间，确保服务端处理完成
+          await Future.delayed(const Duration(milliseconds: 500));
+        } catch (e) {
+          print('发送结束任务消息失败: $e');
+        }
       }
 
-      // 取消心跳定时器
-      _heartbeatTimer?.cancel();
-      _heartbeatTimer = null;
-
       // 清理资源
-      await _wsSubscription?.cancel();
-      await _channel?.sink.close(ws_status.normalClosure);
-      await _audioStreamController?.close();
-
-      _wsSubscription = null;
-      _channel = null;
-      _audioStreamController = null;
+      await _cleanupResources();
 
     } catch (e) {
       print('Error stopping recording: $e');
@@ -361,15 +534,11 @@ Function(String)? onSpeechRecognized;
   }
 
   /// 添加音频数据到流
-  Future<void> addAudioData(List<int> data) async {
+  Future<void> addAudioData(Uint8List data) async {
     if (_isRecording && _audioStreamController != null && _channel != null) {
-      _audioStreamController?.add(data);
-      // 发送音频数据
       try {
-        _channel?.sink.add(jsonEncode({
-          'type': 'binary',
-          'data': base64Encode(data),
-        }));
+        // 直接发送二进制音频数据
+        _channel?.sink.add(data);
       } catch (e) {
         print('Error sending audio data: $e');
         await stopRecording();
@@ -377,8 +546,6 @@ Function(String)? onSpeechRecognized;
       }
     }
   }
-
-
   // 以下是辅助方法，用于从文本中提取信息
   String _extractMedicineName(String input) {
     // 简单的实现，实际应该使用更复杂的算法
@@ -422,4 +589,5 @@ Function(String)? onSpeechRecognized;
     return [DateTime(now.year, now.month, now.day, 8, 0)];
   }
 }
+
 
